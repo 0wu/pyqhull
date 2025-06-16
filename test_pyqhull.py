@@ -86,7 +86,7 @@ def test_parallel_scaling():
     n_points = 24
     batch_sizes = [2**i for i in range(0, 13)]
     n_trials = 10
-    threadpool_sizes = [1, 4, 16, 64]
+    threadpool_sizes = [1, 4, 16, 48, 96]
     results = benchmark_threadpool_scaling(batch_sizes, n_points, n_trials, threadpool_sizes)
     print("\n=== Summary ===")
     print("Threadpool | Batch Size | Avg Time (s) | Stderr Time (s)")
