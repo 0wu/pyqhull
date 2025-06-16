@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=45", "wheel", "pybind11>=2.6.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pyqhull"
+version = "0.1.0"
+description = "Batch convex hull computation using qhull"
+readme = "README.md"
+requires-python = ">=3.6"
+dependencies = [
+    "numpy>=1.18.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "pybind11>=2.6.0",
+]
