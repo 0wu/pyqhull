@@ -2,6 +2,8 @@ import numpy as np
 import pyqhull
 import time
 import matplotlib.pyplot as plt
+import pdb
+from scipy.spatial import ConvexHull
 
 def test_basic_functionality():
     # Define cube vertices
@@ -23,16 +25,35 @@ def test_basic_functionality():
     points = np.tile(cube_points[np.newaxis, :, :], (batch_size, 1, 1))
     
     # Add some noise to second batch
-    points[1] += np.random.randn(*points[1].shape).astype(np.float64) * 0.1  # changed to float64
+    points[1] += np.random.randn(*points[1].shape).astype(np.float64) * 0.5  # changed to float64
     
     # Compute convex hull
     pyqhull.set_threadpool_size(1)  # Set threadpool size for parallel processing
-    result = pyqhull.convex_hull_batch(points)
-    print(result)
+    mask = pyqhull.convex_hull_batch(points)
+    print(mask)
     
-    # Validate the result
-    assert result is not None, "Convex hull computation failed"
-    assert len(result) > 0, "Convex hull result is empty"
+    # Compute the convex hull hyperplanes
+    hyperplanes = pyqhull.convex_hull_hyperplanes_from_mask(points, mask)
+
+    ##
+    ref_point = np.zeros(3)
+    epsilon = pyqhull.min_distance_to_hyperplanes(points, ref_point)
+    print(f"Minimum distance from points to hyperplanes: {epsilon}")
+
+    ## compare to scipy 
+    hull0 = ConvexHull(points[0,:,:])
+    hull1 = ConvexHull(points[1,:,:])
+    print(hull0.equations.shape, hull1.equations.shape)
+    
+    hyperplanes1_np = np.array(hyperplanes[1])
+    assert hyperplanes1_np.shape == hull1.equations.shape, f"Shape mismatch: {hyperplanes1_np.shape} vs {hull1.equations.shape}"
+    assert np.allclose(np.sort(hyperplanes1_np, axis=0), np.sort(hull1.equations, axis=0)), "Hyperplane values are not close"
+    pdb.set_trace()  # Set a breakpoint for debugging
+
+
+    # Validate the mask
+    assert mask is not None, "Convex hull computation failed"
+    assert len(mask) > 0, "Convex hull result is empty"
 
 def benchmark_threadpool_scaling(batch_sizes, n_points, n_trials, threadpool_sizes):
     results = {tp_size: {} for tp_size in threadpool_sizes}
@@ -43,11 +64,16 @@ def benchmark_threadpool_scaling(batch_sizes, n_points, n_trials, threadpool_siz
                 points = np.random.randn(batch_size, n_points, 3).astype(np.float64)
                 pyqhull.set_threadpool_size(tp_size)
                 start_time = time.time()
-                result = pyqhull.convex_hull_batch(points)
+
+                # result = pyqhull.convex_hull_batch(points)
+
+                ref_point = np.zeros(3)
+                epsilon = pyqhull.min_distance_to_hyperplanes(points, ref_point)
+
                 end_time = time.time()
                 elapsed = end_time - start_time
                 times.append(elapsed)
-                assert result.shape == (batch_size, n_points), f"Expected shape {(batch_size, n_points)}, got {result.shape}"
+                # assert result.shape == (batch_size, n_points), f"Expected shape {(batch_size, n_points)}, got {result.shape}"
             times = np.array(times)
             avg_time = np.mean(times)
             std_time = np.std(times)
