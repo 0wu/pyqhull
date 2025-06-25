@@ -36,7 +36,7 @@ def test_basic_functionality():
     hyperplanes = pyqhull.convex_hull_hyperplanes_from_mask(points, mask)
 
     ##
-    ref_point = np.zeros(3)
+    ref_point = np.zeros((2, 3))
     epsilon = pyqhull.min_distance_to_hyperplanes(points, ref_point)
     print(f"Minimum distance from points to hyperplanes: {epsilon}")
 
@@ -44,7 +44,7 @@ def test_basic_functionality():
     hull0 = ConvexHull(points[0,:,:])
     hull1 = ConvexHull(points[1,:,:])
     print(hull0.equations.shape, hull1.equations.shape)
-    
+
     hyperplanes1_np = np.array(hyperplanes[1])
     assert hyperplanes1_np.shape == hull1.equations.shape, f"Shape mismatch: {hyperplanes1_np.shape} vs {hull1.equations.shape}"
     assert np.allclose(np.sort(hyperplanes1_np, axis=0), np.sort(hull1.equations, axis=0)), "Hyperplane values are not close"
@@ -67,7 +67,7 @@ def benchmark_threadpool_scaling(batch_sizes, n_points, n_trials, threadpool_siz
 
                 # result = pyqhull.convex_hull_batch(points)
 
-                ref_point = np.zeros(3)
+                ref_point = np.zeros((batch_size, 3))
                 epsilon = pyqhull.min_distance_to_hyperplanes(points, ref_point)
 
                 end_time = time.time()

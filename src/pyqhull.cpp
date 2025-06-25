@@ -280,21 +280,23 @@ double point_to_hyperplanes_min_distance(const std::vector<std::vector<double>>&
     return min_dist;
 }
 
-py::array_t<double> min_distance_to_hyperplanes(py::array_t<double> points, py::iterable ref_point) {
+py::array_t<double> min_distance_to_hyperplanes(py::array_t<double> points, py::array_t<double> ref_points) {
     // points: shape (n_envs, n_points, 3)
+    // ref_points: shape (n_envs, 3)
     auto points_buf = points.request();
+    auto ref_points_buf = ref_points.request();
+
     if (points_buf.ndim != 3 || points_buf.shape[2] != 3) {
         throw std::runtime_error("Points must be a 3D array with shape (n_envs, n_points, 3)");
     }
+    if (ref_points_buf.ndim != 2 || ref_points_buf.shape[1] != 3 || ref_points_buf.shape[0] != points_buf.shape[0]) {
+        throw std::runtime_error("ref_points must be a 2D array with shape (n_envs, 3)");
+    }
+
     int n_envs = points_buf.shape[0];
     int n_points = points_buf.shape[1];
     double* points_data = static_cast<double*>(points_buf.ptr);
-
-    // Parse ref_point
-    std::vector<double> point;
-    for (auto v : ref_point) {
-        point.push_back(py::cast<double>(v));
-    }
+    double* ref_points_data = static_cast<double*>(ref_points_buf.ptr);
 
     // Output array
     auto result = py::array_t<double>(n_envs);
@@ -314,9 +316,11 @@ py::array_t<double> min_distance_to_hyperplanes(py::array_t<double> points, py::
     for (int env = 0; env < n_envs; ++env) {
         futures.push_back(pool->enqueue([=]() {
             double* env_points = points_data + env * n_points * 3;
+            double* env_ref_point = ref_points_data + env * 3;
             std::vector<bool> mask = compute_convex_hull_mask(env_points, n_points);
             std::vector<std::vector<double>> planes = compute_hyperplanes_from_mask(env_points, n_points, mask);
-            result_data[env] = point_to_hyperplanes_min_distance(planes, point);
+            std::vector<double> ref_point_vec(env_ref_point, env_ref_point + 3);
+            result_data[env] = point_to_hyperplanes_min_distance(planes, ref_point_vec);
         }));
     }
 
