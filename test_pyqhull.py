@@ -19,19 +19,19 @@ def test_basic_functionality():
         [-1, 1, 1],
         [0, 0, 0]  # Adding an extra point inside the cube
     ], dtype=np.float64)  # changed to float64
-    
+
     # Create batch
     batch_size = 2
     points = np.tile(cube_points[np.newaxis, :, :], (batch_size, 1, 1))
-    
+
     # Add some noise to second batch
     points[1] += np.random.randn(*points[1].shape).astype(np.float64) * 0.5  # changed to float64
-    
+
     # Compute convex hull
     pyqhull.set_threadpool_size(1)  # Set threadpool size for parallel processing
     mask = pyqhull.convex_hull_batch(points)
     print(mask)
-    
+
     # Compute the convex hull hyperplanes
     hyperplanes = pyqhull.convex_hull_hyperplanes_from_mask(points, mask)
 
@@ -40,7 +40,20 @@ def test_basic_functionality():
     epsilon = pyqhull.min_distance_to_hyperplanes(points, ref_point)
     print(f"Minimum distance from points to hyperplanes: {epsilon}")
 
-    ## compare to scipy 
+    print('edge cases where ref points are outside of the convex hull')
+    points_outside = np.random.uniform(2, 5, size=(2, 12, 3)).astype(np.float64)
+    epsilon2 = pyqhull.min_distance_to_hyperplanes(points_outside, ref_point)
+    print(f"Minimum distance from points to hyperplanes: {epsilon2}")
+
+    # import pdb; pdb.set_trace()
+    # print('edge cases where ref points are all zero')
+    # points_outside = np.ones((2, 12, 3))
+    # epsilon2 = pyqhull.min_distance_to_hyperplanes(points_outside, ref_point)
+    # print(f"Minimum distance from points to hyperplanes: {epsilon2}")
+
+    # import pdb; pdb.set_trace()  # Set a breakpoint for debugging
+
+    ## compare to scipy
     hull0 = ConvexHull(points[0,:,:])
     hull1 = ConvexHull(points[1,:,:])
     print(hull0.equations.shape, hull1.equations.shape)

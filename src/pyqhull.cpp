@@ -68,7 +68,7 @@ public:
 
 std::vector<bool> compute_convex_hull_mask(double* points, int n_points) {
     std::vector<bool> mask(n_points, false);
-    
+
     if (n_points < 4) {
         for (int i = 0; i < n_points; ++i) {
             mask[i] = true;
@@ -79,10 +79,10 @@ std::vector<bool> compute_convex_hull_mask(double* points, int n_points) {
     // Initialize qhull context
     qhT qh_qh;
     qhT *qh = &qh_qh;
-    
+
     // Initialize qhull
     qh_zero(qh, nullptr);
-    
+
     // Run qhull using reentrant API
     char flags[] = "qhull Qt";
     int exitcode = qh_new_qhull(qh, 3, n_points, points, 0, flags, nullptr, nullptr);
@@ -101,12 +101,12 @@ std::vector<bool> compute_convex_hull_mask(double* points, int n_points) {
             mask[vertex_id] = true;
         }
     }
-    
+
     // Clean up qhull
     qh_freeqhull(qh, !qh_ALL);
     int curlong, totlong;
     qh_memfreeshort(qh, &curlong, &totlong);
-    
+
     return mask;
 }
 
@@ -185,25 +185,25 @@ void set_threadpool_size(int num_threads) {
 
 pybind11::array_t<bool> convex_hull_batch(pybind11::array_t<double> points) {
     auto buf = points.request();
-    
+
     if (buf.ndim != 3) {
         throw std::runtime_error("Input must be 3D array (batch, n_points, 3)");
     }
     if (buf.shape[2] != 3) {
         throw std::runtime_error("Input must have 3 coordinates per point");
     }
-    
+
     int batch_size = buf.shape[0];
     int n_points = buf.shape[1];
-    
+
     // Create output array
     auto result = pybind11::array_t<bool>({batch_size, n_points});
     auto result_buf = result.request();
-    
+
     // Get data pointers
     double* points_data = static_cast<double*>(buf.ptr);
     bool* result_data = static_cast<bool*>(result_buf.ptr);
-    
+
     ThreadPool* pool = nullptr;
     {
         std::lock_guard<std::mutex> lock(g_threadpool_mutex);
@@ -281,6 +281,7 @@ double point_to_hyperplanes_min_distance(const std::vector<std::vector<double>>&
 }
 
 py::array_t<double> min_distance_to_hyperplanes(py::array_t<double> points, py::array_t<double> ref_points) {
+    //The min_distance_to_hyperplanes function computes, for each environment (batch), the signed minimum distance from a reference point to the convex hull defined by a set of 3D points.
     // points: shape (n_envs, n_points, 3)
     // ref_points: shape (n_envs, 3)
     auto points_buf = points.request();
@@ -320,7 +321,25 @@ py::array_t<double> min_distance_to_hyperplanes(py::array_t<double> points, py::
             std::vector<bool> mask = compute_convex_hull_mask(env_points, n_points);
             std::vector<std::vector<double>> planes = compute_hyperplanes_from_mask(env_points, n_points, mask);
             std::vector<double> ref_point_vec(env_ref_point, env_ref_point + 3);
-            result_data[env] = point_to_hyperplanes_min_distance(planes, ref_point_vec);
+
+            // Compute signed distances to all planes
+            double min_abs_dist = std::numeric_limits<double>::max();
+            double sign = 1.0;
+            bool inside = true;
+            for (const auto& plane : planes) {
+                if (plane.size() != 4) continue;
+                double d = plane[0] * ref_point_vec[0] + plane[1] * ref_point_vec[1] + plane[2] * ref_point_vec[2] + plane[3];
+                double denom = std::sqrt(plane[0]*plane[0] + plane[1]*plane[1] + plane[2]*plane[2]);
+                if (denom == 0.0) continue;
+                double dist = d / denom;
+                if (dist > 1e-12) inside = false; // outside at least one plane
+                if (std::abs(dist) < std::abs(min_abs_dist)) {
+                    min_abs_dist = dist;
+                    sign = (dist >= 0) ? 1.0 : -1.0;
+                }
+            }
+            // If outside, return negative distance
+            result_data[env] = inside ? std::abs(min_abs_dist) : -std::abs(min_abs_dist);
         }));
     }
 
