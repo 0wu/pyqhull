@@ -351,6 +351,85 @@ py::array_t<double> min_distance_to_hyperplanes(py::array_t<double> points, py::
 }
 
 
+/*
+ * Compute the Minkowski sum of n sets of vectors.
+ * Each contact (arg[c]) is a matrix of shape (n_fric_edge, vec_dim).
+ * The result is a matrix where each row is a sum of one vector from each contact.
+ *
+ * Args:
+ *   arg: std::vector<std::vector<std::vector<double>>> of shape (numContacts, n_fric_edge, vec_dim)
+ * Returns:
+ *   std::vector<std::vector<double>>: all possible Minkowski sums (rows)
+ */
+void minkowski_sum_recursive(
+    int c,
+    std::vector<double>& prevSum,
+    const std::vector<std::vector<std::vector<double>>>& arg,
+    std::vector<std::vector<double>>& result,
+    int n_fric_edge,
+    int numContacts,
+    int vec_dim
+) {
+    if (c == numContacts) {
+        result.push_back(prevSum);
+        return;
+    }
+
+    // Exclude this contact
+    minkowski_sum_recursive(c + 1, prevSum, arg, result, n_fric_edge, numContacts, vec_dim);
+
+    // Include each friction edge of this contact
+    const auto& this_contact = arg[c];
+    for (int w = 0; w < n_fric_edge; ++w) {
+        std::vector<double> nextSum(prevSum);
+        for (int d = 0; d < vec_dim; ++d) {
+            nextSum[d] += this_contact[w][d];
+        }
+        minkowski_sum_recursive(c + 1, nextSum, arg, result, n_fric_edge, numContacts, vec_dim);
+    }
+}
+
+// Python binding for Minkowski sum
+py::array_t<double> minkowski_sum(py::list arg) {
+    // arg: list of numContacts arrays, each (n_fric_edge, vec_dim)
+    int numContacts = arg.size();
+    if (numContacts == 0)
+        return py::array_t<double>(std::vector<ssize_t>{0, 0});
+
+    std::vector<std::vector<std::vector<double>>> arg_vec;
+    int n_fric_edge = -1, vec_dim = -1;
+    for (int c = 0; c < numContacts; ++c) {
+        py::array_t<double> arr = py::cast<py::array_t<double>>(arg[c]);
+        auto buf = arr.request();
+        if (buf.ndim != 2)
+            throw std::runtime_error("Each contact must be a 2D array");
+        if (n_fric_edge == -1) n_fric_edge = buf.shape[0];
+        if (vec_dim == -1) vec_dim = buf.shape[1];
+        if (buf.shape[0] != n_fric_edge || buf.shape[1] != vec_dim)
+            throw std::runtime_error("All contacts must have the same shape");
+        std::vector<std::vector<double>> contact(n_fric_edge, std::vector<double>(vec_dim));
+        double* data = static_cast<double*>(buf.ptr);
+        for (int i = 0; i < n_fric_edge; ++i)
+            for (int j = 0; j < vec_dim; ++j)
+                contact[i][j] = data[i * vec_dim + j];
+        arg_vec.push_back(std::move(contact));
+    }
+
+    std::vector<double> prevSum(vec_dim, 0.0);
+    std::vector<std::vector<double>> result;
+    minkowski_sum_recursive(0, prevSum, arg_vec, result, n_fric_edge, numContacts, vec_dim);
+
+    // Convert result to numpy array
+    ssize_t n_rows = result.size();
+    py::array_t<double> out(std::vector<ssize_t>{n_rows, vec_dim});
+    auto out_buf = out.request();
+    double* out_ptr = static_cast<double*>(out_buf.ptr);
+    for (ssize_t i = 0; i < n_rows; ++i)
+        for (int j = 0; j < vec_dim; ++j)
+            out_ptr[i * vec_dim + j] = result[i][j];
+    return out;
+}
+
 
 PYBIND11_MODULE(pyqhull, m) {
     m.doc() = "Batch convex hull computation using qhull";
@@ -364,4 +443,6 @@ PYBIND11_MODULE(pyqhull, m) {
     m.def("min_distance_to_hyperplanes", &min_distance_to_hyperplanes,
         "Compute the minimum distance from a point to a set of hyperplanes",
         pybind11::arg("points"), pybind11::arg("ref_point"));
+    m.def("minkowski_sum", &minkowski_sum, "Compute the Minkowski sum of multiple sets of vectors",
+          pybind11::arg("arg"));
 }

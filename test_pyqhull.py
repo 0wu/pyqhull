@@ -4,6 +4,8 @@ import time
 import matplotlib.pyplot as plt
 import pdb
 from scipy.spatial import ConvexHull
+from mpl_toolkits.mplot3d.art3d import Poly3DCollection
+
 
 def test_basic_functionality():
     # Define cube vertices
@@ -61,12 +63,61 @@ def test_basic_functionality():
     hyperplanes1_np = np.array(hyperplanes[1])
     assert hyperplanes1_np.shape == hull1.equations.shape, f"Shape mismatch: {hyperplanes1_np.shape} vs {hull1.equations.shape}"
     assert np.allclose(np.sort(hyperplanes1_np, axis=0), np.sort(hull1.equations, axis=0)), "Hyperplane values are not close"
-    pdb.set_trace()  # Set a breakpoint for debugging
+    # pdb.set_trace()  # Set a breakpoint for debugging
 
 
     # Validate the mask
     assert mask is not None, "Convex hull computation failed"
     assert len(mask) > 0, "Convex hull result is empty"
+
+
+    ## Minkowski sum test
+    # Create a list of arrays, each with shape (n_fric_edge, vec_dim)
+    points_list = [
+        np.array([[-1, 0, 0], [-1, 0, -1], [-1, 0, 1], [-1, 1, 0], [-1, -1, 0]], dtype=np.float64),         # Cluster 1
+        np.array([[0, -1, 0], [-1, -1, 0], [1, -1, 0], [0, -1, -1], [0, -1, 1]], dtype=np.float64),         # Cluster 2
+    ]
+    out = pyqhull.minkowski_sum(points_list)
+    print(f"Minkowski sum result shape: {out.shape}")
+
+    # Visualize the original clusters and the Minkowski sum result
+    fig = plt.figure(figsize=(10, 6))
+    ax = fig.add_subplot(121, projection='3d')
+    colors = ['r', 'g', 'b', 'm']
+    for i, pts in enumerate(points_list):
+        ax.scatter(pts[:, 0], pts[:, 1], pts[:, 2], color=colors[i], label=f'Cluster {i+1}', s=100)
+    ax.set_title('Original Clusters')
+    ax.legend()
+    ax.set_xlabel('X')
+    ax.set_ylabel('Y')
+    ax.set_zlabel('Z')
+
+    ax2 = fig.add_subplot(122, projection='3d')
+    ax2.scatter(out[:, 0], out[:, 1], out[:, 2], color='k', s=80, alpha=0.6, label='Minkowski Sum')
+    ax2.set_title('Minkowski Sum Result')
+    ax2.set_xlabel('X')
+    ax2.set_ylabel('Y')
+    ax2.set_zlabel('Z')
+    ax2.legend()
+
+    minkowski_pts = out[np.newaxis, :, :]
+    mask = pyqhull.convex_hull_batch(minkowski_pts)
+    convex_pts = minkowski_pts[mask]
+
+    ax2.scatter(convex_pts[:, 0], convex_pts[:, 1], convex_pts[:, 2], color='r', s=120, alpha=0.6, label='Minkowski Sum', marker = 'v')
+
+    # Compute convex hull of Minkowski sum points
+    hull = ConvexHull(minkowski_pts[0])
+
+    # Plot the convex hull as a transparent surface
+    for simplex in hull.simplices:
+        tri = minkowski_pts[0][simplex]
+        poly = Poly3DCollection([tri], alpha=0.3, facecolor='cyan', edgecolor='k')
+        ax2.add_collection3d(poly)
+
+    plt.tight_layout()
+    plt.show()
+
 
 def benchmark_threadpool_scaling(batch_sizes, n_points, n_trials, threadpool_sizes):
     results = {tp_size: {} for tp_size in threadpool_sizes}
