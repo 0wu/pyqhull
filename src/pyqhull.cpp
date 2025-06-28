@@ -390,29 +390,26 @@ void minkowski_sum_recursive(
 }
 
 // Python binding for Minkowski sum
-py::array_t<double> minkowski_sum(py::list arg) {
-    // arg: list of numContacts arrays, each (n_fric_edge, vec_dim)
-    int numContacts = arg.size();
-    if (numContacts == 0)
-        return py::array_t<double>(std::vector<ssize_t>{0, 0});
+py::array_t<double> minkowski_sum(py::array_t<double> arg) {
+    // arg: array of shape (numContacts, n_fric_edge, vec_dim)
+    auto buf = arg.request();
+    if (buf.ndim != 3)
+        throw std::runtime_error("Input must be a 3D array of shape (numContacts, n_fric_edge, vec_dim)");
 
-    std::vector<std::vector<std::vector<double>>> arg_vec;
-    int n_fric_edge = -1, vec_dim = -1;
+    int numContacts = buf.shape[0];
+    int n_fric_edge = buf.shape[1];
+    int vec_dim = buf.shape[2];
+
+    // Convert input to std::vector<std::vector<std::vector<double>>>
+    std::vector<std::vector<std::vector<double>>> arg_vec(numContacts,
+        std::vector<std::vector<double>>(n_fric_edge, std::vector<double>(vec_dim)));
+    double* data = static_cast<double*>(buf.ptr);
     for (int c = 0; c < numContacts; ++c) {
-        py::array_t<double> arr = py::cast<py::array_t<double>>(arg[c]);
-        auto buf = arr.request();
-        if (buf.ndim != 2)
-            throw std::runtime_error("Each contact must be a 2D array");
-        if (n_fric_edge == -1) n_fric_edge = buf.shape[0];
-        if (vec_dim == -1) vec_dim = buf.shape[1];
-        if (buf.shape[0] != n_fric_edge || buf.shape[1] != vec_dim)
-            throw std::runtime_error("All contacts must have the same shape");
-        std::vector<std::vector<double>> contact(n_fric_edge, std::vector<double>(vec_dim));
-        double* data = static_cast<double*>(buf.ptr);
-        for (int i = 0; i < n_fric_edge; ++i)
-            for (int j = 0; j < vec_dim; ++j)
-                contact[i][j] = data[i * vec_dim + j];
-        arg_vec.push_back(std::move(contact));
+        for (int i = 0; i < n_fric_edge; ++i) {
+            for (int j = 0; j < vec_dim; ++j) {
+                arg_vec[c][i][j] = data[c * n_fric_edge * vec_dim + i * vec_dim + j];
+            }
+        }
     }
 
     std::vector<double> prevSum(vec_dim, 0.0);
@@ -429,7 +426,58 @@ py::array_t<double> minkowski_sum(py::list arg) {
             out_ptr[i * vec_dim + j] = result[i][j];
     return out;
 }
+py::list minkowski_sum_batch(py::array_t<double> batch_arg) {
+    // batch_arg: array of shape (n_batch, numContacts, n_fric_edge, vec_dim)
+    auto buf = batch_arg.request();
+    if (buf.ndim != 4)
+        throw std::runtime_error("Input must be a 4D array of shape (n_batch, numContacts, n_fric_edge, vec_dim)");
 
+    int n_batch = buf.shape[0];
+    int numContacts = buf.shape[1];
+    int n_fric_edge = buf.shape[2];
+    int vec_dim = buf.shape[3];
+    double* data = static_cast<double*>(buf.ptr);
+
+    py::list result;
+
+    ThreadPool* pool = nullptr;
+    {
+        std::lock_guard<std::mutex> lock(g_threadpool_mutex);
+        pool = g_threadpool;
+        if (!pool) {
+            throw std::runtime_error("Thread pool not initialized. Call set_threadpool_size() first.");
+        }
+    }
+
+    std::vector<std::future<py::array_t<double>>> futures;
+    for (int b = 0; b < n_batch; ++b) {
+        // Prepare a view for this batch: shape (numContacts, n_fric_edge, vec_dim)
+        py::array_t<double> single_arg({numContacts, n_fric_edge, vec_dim});
+        auto single_buf = single_arg.request();
+        double* single_ptr = static_cast<double*>(single_buf.ptr);
+
+        // Copy data for this batch
+        for (int c = 0; c < numContacts; ++c) {
+            for (int i = 0; i < n_fric_edge; ++i) {
+                for (int j = 0; j < vec_dim; ++j) {
+                    single_ptr[c * n_fric_edge * vec_dim + i * vec_dim + j] =
+                        data[b * numContacts * n_fric_edge * vec_dim +
+                             c * n_fric_edge * vec_dim +
+                             i * vec_dim + j];
+                }
+            }
+        }
+
+        futures.push_back(pool->enqueue([single_arg]() {
+            return minkowski_sum(single_arg);
+        }));
+    }
+
+    for (auto& fut : futures) {
+        result.append(fut.get());
+    }
+    return result;
+}
 
 PYBIND11_MODULE(pyqhull, m) {
     m.doc() = "Batch convex hull computation using qhull";
@@ -445,4 +493,6 @@ PYBIND11_MODULE(pyqhull, m) {
         pybind11::arg("points"), pybind11::arg("ref_point"));
     m.def("minkowski_sum", &minkowski_sum, "Compute the Minkowski sum of multiple sets of vectors",
           pybind11::arg("arg"));
+    m.def("minkowski_sum_batch", &minkowski_sum_batch, "Compute the Minkowski sum for a batch of inputs",
+        pybind11::arg("batch_arg"));
 }

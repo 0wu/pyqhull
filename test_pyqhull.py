@@ -73,10 +73,14 @@ def test_basic_functionality():
 
     ## Minkowski sum test
     # Create a list of arrays, each with shape (n_fric_edge, vec_dim)
-    points_list = [
-        np.array([[-1, 0, 0], [-1, 0, -1], [-1, 0, 1], [-1, 1, 0], [-1, -1, 0]], dtype=np.float64),         # Cluster 1
-        np.array([[0, -1, 0], [-1, -1, 0], [1, -1, 0], [0, -1, -1], [0, -1, 1]], dtype=np.float64),         # Cluster 2
-    ]
+    numContacts = 2
+    n_fric_edge = 5
+    vec_dim = 3
+    points_list = np.array([
+        [[-1, 0, 0], [-1, 0, -1], [-1, 0, 1], [-1, 1, 0], [-1, -1, 0]],        # Contact 1
+        [[0, -1, 0], [-1, -1, 0], [1, -1, 0], [0, -1, -1], [0, -1, 1]],        # Contact 2
+    ], dtype=np.float64)  # shape: (numContacts, n_fric_edge, vec_dim)
+
     out = pyqhull.minkowski_sum(points_list)
     print(f"Minkowski sum result shape: {out.shape}")
 
@@ -117,6 +121,31 @@ def test_basic_functionality():
 
     plt.tight_layout()
     plt.show()
+
+
+    ## for a list of n_environments
+    # Prepare input as an array for minkowski_sum_batch
+    points_array = np.stack([points_list, points_list], axis=0)  # shape: (2, numContacts, n_fric_edge, vec_dim)
+    out = pyqhull.minkowski_sum_batch(points_array)
+
+    def pad_minkowski_sum_batch(out):
+        """
+        Convert a list of arrays (from minkowski_sum_batch) into a padded array of shape (n_batch, max_n_points, vec_dim).
+        """
+        n_batch = len(out)
+        max_n_points = max(arr.shape[0] for arr in out)
+        vec_dim = out[0].shape[1]
+        out_padded = np.zeros((n_batch, max_n_points, vec_dim), dtype=out[0].dtype)
+        for i, arr in enumerate(out):
+            n_pts = arr.shape[0]
+            out_padded[i, :n_pts, :] = arr
+        return out_padded
+
+    # Example usage:
+    minkowski_test_envs = pad_minkowski_sum_batch(out)
+    print(f"Padded Minkowski sum batch result shape: {minkowski_test_envs.shape}")
+
+    import pdb; pdb.set_trace()
 
 
 def benchmark_threadpool_scaling(batch_sizes, n_points, n_trials, threadpool_sizes):
