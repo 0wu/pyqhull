@@ -8,6 +8,7 @@
 #include <functional>
 #include <mutex>
 #include <condition_variable>
+#include <iostream>  // Include for std::cerr
 
 namespace py = pybind11;
 
@@ -15,56 +16,105 @@ extern "C" {
 #include "libqhull_r/libqhull_r.h"
 }
 
+// class ThreadPool {
+// private:
+//     std::vector<std::thread> workers;
+//     std::queue<std::function<void()>> tasks;
+//     std::mutex queue_mutex;
+//     std::condition_variable condition;
+//     bool stop;
+
+// public:
+//     ThreadPool(size_t threads) : stop(false) {
+//         for(size_t i = 0; i < threads; ++i) {
+//             workers.emplace_back([this] {
+//                 for(;;) {
+//                     std::function<void()> task;
+//                     {
+//                         std::unique_lock<std::mutex> lock(this->queue_mutex);
+//                         this->condition.wait(lock, [this]{ return this->stop || !this->tasks.empty(); });
+//                         if(this->stop && this->tasks.empty()) return;
+//                         task = std::move(this->tasks.front());
+//                         this->tasks.pop();
+//                     }
+//                     task();
+//                 }
+//             });
+//         }
+//     }
+
+//     template<class F>
+//     auto enqueue(F&& f) -> std::future<typename std::result_of<F()>::type> {
+//         using return_type = typename std::result_of<F()>::type;
+//         auto task = std::make_shared<std::packaged_task<return_type()>>(std::forward<F>(f));
+//         std::future<return_type> res = task->get_future();
+//         {
+//             std::unique_lock<std::mutex> lock(queue_mutex);
+//             if(stop) throw std::runtime_error("enqueue on stopped ThreadPool");
+//             tasks.emplace([task](){ (*task)(); });
+//         }
+//         condition.notify_one();
+//         return res;
+//     }
+
+//     ~ThreadPool() {
+//         {
+//             std::unique_lock<std::mutex> lock(queue_mutex);
+//             stop = true;
+//         }
+//         condition.notify_all();
+//         for(std::thread &worker: workers) worker.join();
+//     }
+// };
+
 class ThreadPool {
-private:
-    std::vector<std::thread> workers;
-    std::queue<std::function<void()>> tasks;
-    std::mutex queue_mutex;
-    std::condition_variable condition;
-    bool stop;
-
-public:
-    ThreadPool(size_t threads) : stop(false) {
-        for(size_t i = 0; i < threads; ++i) {
-            workers.emplace_back([this] {
-                for(;;) {
-                    std::function<void()> task;
-                    {
-                        std::unique_lock<std::mutex> lock(this->queue_mutex);
-                        this->condition.wait(lock, [this]{ return this->stop || !this->tasks.empty(); });
-                        if(this->stop && this->tasks.empty()) return;
-                        task = std::move(this->tasks.front());
-                        this->tasks.pop();
+    private:
+        std::vector<std::thread> workers;
+        std::queue<std::function<void()>> tasks;
+        std::mutex queue_mutex;
+        std::condition_variable condition;
+        bool stop;
+    public:
+        ThreadPool(size_t threads) : stop(false) {
+            for(size_t i = 0; i < threads; ++i) {
+                workers.emplace_back([this] {
+                    for(;;) {
+                        std::function<void()> task;
+                        {
+                            std::unique_lock<std::mutex> lock(this->queue_mutex);
+                            this->condition.wait(lock, [this]{ return this->stop || !this->tasks.empty(); });
+                            if(this->stop && this->tasks.empty()) return;
+                            task = std::move(this->tasks.front());
+                            this->tasks.pop();
+                        }
+                        task();
                     }
-                    task();
-                }
-            });
+                });
+            }
         }
-    }
+        template<class F>
+        auto enqueue(F&& f) -> std::future<typename std::result_of<F()>::type> {
+            using return_type = typename std::result_of<F()>::type;
+            auto task = std::make_shared<std::packaged_task<return_type()>>(std::forward<F>(f));
+            std::future<return_type> res = task->get_future();
+            {
+                std::unique_lock<std::mutex> lock(queue_mutex);
+                if(stop) throw std::runtime_error("enqueue on stopped ThreadPool");
+                tasks.emplace([task](){ (*task)(); });
+            }
+            condition.notify_one();
+            return res;
+        }
+        ~ThreadPool() {
+            {
+                std::unique_lock<std::mutex> lock(queue_mutex);
+                stop = true;
+            }
+            condition.notify_all();
+            for(std::thread &worker: workers) worker.join();
+        }
+    };
 
-    template<class F>
-    auto enqueue(F&& f) -> std::future<typename std::result_of<F()>::type> {
-        using return_type = typename std::result_of<F()>::type;
-        auto task = std::make_shared<std::packaged_task<return_type()>>(std::forward<F>(f));
-        std::future<return_type> res = task->get_future();
-        {
-            std::unique_lock<std::mutex> lock(queue_mutex);
-            if(stop) throw std::runtime_error("enqueue on stopped ThreadPool");
-            tasks.emplace([task](){ (*task)(); });
-        }
-        condition.notify_one();
-        return res;
-    }
-
-    ~ThreadPool() {
-        {
-            std::unique_lock<std::mutex> lock(queue_mutex);
-            stop = true;
-        }
-        condition.notify_all();
-        for(std::thread &worker: workers) worker.join();
-    }
-};
 
 std::vector<bool> compute_convex_hull_mask(double* points, int n_points) {
     std::vector<bool> mask(n_points, false);
@@ -180,6 +230,14 @@ void set_threadpool_size(int num_threads) {
     }
     if (g_threadpool_size > 0) {
         g_threadpool = new ThreadPool(g_threadpool_size);
+    }
+}
+
+int check_threadpool_num_threads() {
+    if (g_threadpool) {
+        return g_threadpool_size;
+    } else {
+        return -1;
     }
 }
 
@@ -413,7 +471,9 @@ py::array_t<double> minkowski_sum(py::array_t<double> arg) {
     }
 
     std::vector<double> prevSum(vec_dim, 0.0);
-    std::vector<std::vector<double>> result;
+    // std::vector<std::vector<double>> result;
+    std::vector<std::vector<double>> result(static_cast<size_t>(std::pow(n_fric_edge, numContacts + 1)), std::vector<double>(vec_dim, 0.0));
+    size_t result_idx = 0;
     minkowski_sum_recursive(0, prevSum, arg_vec, result, n_fric_edge, numContacts, vec_dim);
 
     // Convert result to numpy array
@@ -426,20 +486,38 @@ py::array_t<double> minkowski_sum(py::array_t<double> arg) {
             out_ptr[i * vec_dim + j] = result[i][j];
     return out;
 }
+
+// py::list minkowski_sum_batch(py::array_t<double> batch_arg) {
+//     auto buf = batch_arg.request();
+//     if (buf.ndim != 4)
+//         throw std::runtime_error("Input must be a 4D array of shape (n_batch, numContacts, n_fric_edge, vec_dim)");
+//     int n_batch = buf.shape[0];
+//     int numContacts = buf.shape[1];
+//     int n_fric_edge = buf.shape[2];
+//     int vec_dim = buf.shape[3];
+//     double* data = static_cast<double*>(buf.ptr);
+//     py::list result;
+//     for (int b = 0; b < n_batch; ++b) {
+//         // Create a view for the current batch: shape (numContacts, n_fric_edge, vec_dim)
+//         py::array_t<double> single_arg({numContacts, n_fric_edge, vec_dim}, data + b * numContacts * n_fric_edge * vec_dim);
+//         // Directly call the function without threading
+//         py::array_t<double> result_batch = minkowski_sum(single_arg);  // Result: (1, vec_dim)
+//         result.append(result_batch);  // Append result to list
+//     }
+//     return result;
+// }
+
+
 py::list minkowski_sum_batch(py::array_t<double> batch_arg) {
-    // batch_arg: array of shape (n_batch, numContacts, n_fric_edge, vec_dim)
     auto buf = batch_arg.request();
     if (buf.ndim != 4)
         throw std::runtime_error("Input must be a 4D array of shape (n_batch, numContacts, n_fric_edge, vec_dim)");
-
     int n_batch = buf.shape[0];
     int numContacts = buf.shape[1];
     int n_fric_edge = buf.shape[2];
     int vec_dim = buf.shape[3];
     double* data = static_cast<double*>(buf.ptr);
-
     py::list result;
-
     ThreadPool* pool = nullptr;
     {
         std::lock_guard<std::mutex> lock(g_threadpool_mutex);
@@ -449,35 +527,44 @@ py::list minkowski_sum_batch(py::array_t<double> batch_arg) {
         }
     }
 
-    std::vector<std::future<py::array_t<double>>> futures;
+    // Prepare a vector to store the raw C++ results
+    std::vector<std::vector<std::vector<double>>> batch_cpp_results(n_batch);
+    std::vector<std::future<void>> futures;
     for (int b = 0; b < n_batch; ++b) {
-        // Prepare a view for this batch: shape (numContacts, n_fric_edge, vec_dim)
-        py::array_t<double> single_arg({numContacts, n_fric_edge, vec_dim});
-        auto single_buf = single_arg.request();
-        double* single_ptr = static_cast<double*>(single_buf.ptr);
-
-        // Copy data for this batch
-        for (int c = 0; c < numContacts; ++c) {
-            for (int i = 0; i < n_fric_edge; ++i) {
-                for (int j = 0; j < vec_dim; ++j) {
-                    single_ptr[c * n_fric_edge * vec_dim + i * vec_dim + j] =
-                        data[b * numContacts * n_fric_edge * vec_dim +
-                             c * n_fric_edge * vec_dim +
-                             i * vec_dim + j];
+        futures.push_back(pool->enqueue([=, &batch_cpp_results]() {
+            // Prepare input for C++ computation
+            std::vector<std::vector<std::vector<double>>> arg_vec(numContacts,
+                std::vector<std::vector<double>>(n_fric_edge, std::vector<double>(vec_dim)));
+            double* batch_data = data + b * numContacts * n_fric_edge * vec_dim;
+            for (int c = 0; c < numContacts; ++c) {
+                for (int i = 0; i < n_fric_edge; ++i) {
+                    for (int j = 0; j < vec_dim; ++j) {
+                        arg_vec[c][i][j] = batch_data[c * n_fric_edge * vec_dim + i * vec_dim + j];
+                    }
                 }
             }
-        }
-
-        futures.push_back(pool->enqueue([single_arg]() {
-            return minkowski_sum(single_arg);
+            std::vector<double> prevSum(vec_dim, 0.0);
+            std::vector<std::vector<double>> result_vec;
+            minkowski_sum_recursive(0, prevSum, arg_vec, result_vec, n_fric_edge, numContacts, vec_dim);
+            batch_cpp_results[b] = std::move(result_vec);
         }));
     }
-
-    for (auto& fut : futures) {
-        result.append(fut.get());
+    for (auto& fut : futures) fut.wait();
+    // Now, with the GIL, convert C++ results to Python objects
+    py::gil_scoped_acquire gil;
+    for (int b = 0; b < n_batch; ++b) {
+        ssize_t n_rows = batch_cpp_results[b].size();
+        py::array_t<double> out(std::vector<ssize_t>{n_rows, vec_dim});
+        auto out_buf = out.request();
+        double* out_ptr = static_cast<double*>(out_buf.ptr);
+        for (ssize_t i = 0; i < n_rows; ++i)
+            for (int j = 0; j < vec_dim; ++j)
+                out_ptr[i * vec_dim + j] = batch_cpp_results[b][i][j];
+        result.append(out);
     }
-    return result;
+return result;
 }
+
 
 PYBIND11_MODULE(pyqhull, m) {
     m.doc() = "Batch convex hull computation using qhull";
@@ -495,4 +582,6 @@ PYBIND11_MODULE(pyqhull, m) {
           pybind11::arg("arg"));
     m.def("minkowski_sum_batch", &minkowski_sum_batch, "Compute the Minkowski sum for a batch of inputs",
         pybind11::arg("batch_arg"));
+    m.def("check_threadpool_num_threads", &check_threadpool_num_threads, "Check if num threads is currently set.");
+
 }

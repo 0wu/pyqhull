@@ -30,7 +30,7 @@ def test_basic_functionality():
     points[1] += np.random.randn(*points[1].shape).astype(np.float64) * 0.5  # changed to float64
 
     # Compute convex hull
-    pyqhull.set_threadpool_size(1)  # Set threadpool size for parallel processing
+    pyqhull.set_threadpool_size(16)  # Set threadpool size for parallel processing
     mask = pyqhull.convex_hull_batch(points)
     print(mask)
 
@@ -82,51 +82,74 @@ def test_basic_functionality():
     ], dtype=np.float64)  # shape: (numContacts, n_fric_edge, vec_dim)
 
     out = pyqhull.minkowski_sum(points_list)
-    print(f"Minkowski sum result shape: {out.shape}")
 
-    # Visualize the original clusters and the Minkowski sum result
-    fig = plt.figure(figsize=(10, 6))
-    ax = fig.add_subplot(121, projection='3d')
-    colors = ['r', 'g', 'b', 'm']
-    for i, pts in enumerate(points_list):
-        ax.scatter(pts[:, 0], pts[:, 1], pts[:, 2], color=colors[i], label=f'Cluster {i+1}', s=100)
-    ax.set_title('Original Clusters')
-    ax.legend()
-    ax.set_xlabel('X')
-    ax.set_ylabel('Y')
-    ax.set_zlabel('Z')
 
-    ax2 = fig.add_subplot(122, projection='3d')
-    ax2.scatter(out[:, 0], out[:, 1], out[:, 2], color='k', s=80, alpha=0.6, label='Minkowski Sum')
-    ax2.set_title('Minkowski Sum Result')
-    ax2.set_xlabel('X')
-    ax2.set_ylabel('Y')
-    ax2.set_zlabel('Z')
-    ax2.legend()
+    ## NOTE: This is a bug - if all zero qhull will crash
+    # time_start = time.time()
+    # out = pyqhull.minkowski_sum(np.zeros((4, 7, 3)))
+    # print(f">>> Minkowski sum took: {time.time() - time_start} sec")
 
-    minkowski_pts = out[np.newaxis, :, :]
-    mask = pyqhull.convex_hull_batch(minkowski_pts)
-    convex_pts = minkowski_pts[mask]
+    if 1:
+        # Visualize the original clusters and the Minkowski sum result
+        fig = plt.figure(figsize=(10, 6))
+        ax = fig.add_subplot(121, projection='3d')
+        colors = ['r', 'g', 'b', 'm']
+        for i, pts in enumerate(points_list):
+            ax.scatter(pts[:, 0], pts[:, 1], pts[:, 2], color=colors[i], label=f'Cluster {i+1}', s=100)
+        ax.set_title('Original Clusters')
+        ax.legend()
+        ax.set_xlabel('X')
+        ax.set_ylabel('Y')
+        ax.set_zlabel('Z')
 
-    ax2.scatter(convex_pts[:, 0], convex_pts[:, 1], convex_pts[:, 2], color='r', s=120, alpha=0.6, label='Minkowski Sum', marker = 'v')
+        ax2 = fig.add_subplot(122, projection='3d')
+        ax2.scatter(out[:, 0], out[:, 1], out[:, 2], color='k', s=80, alpha=0.6, label='Minkowski Sum')
+        ax2.set_title('Minkowski Sum Result')
+        ax2.set_xlabel('X')
+        ax2.set_ylabel('Y')
+        ax2.set_zlabel('Z')
+        ax2.legend()
 
-    # Compute convex hull of Minkowski sum points
-    hull = ConvexHull(minkowski_pts[0])
+        minkowski_pts = out[np.newaxis, :, :]
+        mask = pyqhull.convex_hull_batch(minkowski_pts)
+        convex_pts = minkowski_pts[mask]
 
-    # Plot the convex hull as a transparent surface
-    for simplex in hull.simplices:
-        tri = minkowski_pts[0][simplex]
-        poly = Poly3DCollection([tri], alpha=0.3, facecolor='cyan', edgecolor='k')
-        ax2.add_collection3d(poly)
+        ax2.scatter(convex_pts[:, 0], convex_pts[:, 1], convex_pts[:, 2], color='r', s=120, alpha=0.6, label='Minkowski Sum', marker = 'v')
 
-    plt.tight_layout()
-    plt.show()
+        # Compute convex hull of Minkowski sum points
+        hull = ConvexHull(minkowski_pts[0])
+
+        # Plot the convex hull as a transparent surface
+        for simplex in hull.simplices:
+            tri = minkowski_pts[0][simplex]
+            poly = Poly3DCollection([tri], alpha=0.3, facecolor='cyan', edgecolor='k')
+            ax2.add_collection3d(poly)
+
+        plt.tight_layout()
+        plt.show()
 
 
     ## for a list of n_environments
     # Prepare input as an array for minkowski_sum_batch
-    points_array = np.stack([points_list, points_list], axis=0)  # shape: (2, numContacts, n_fric_edge, vec_dim)
-    out = pyqhull.minkowski_sum_batch(points_array)
+    curr_num_threads = pyqhull.check_threadpool_num_threads()
+    print(f"check_threadpool_num_threads = {curr_num_threads}")
+
+    points_array = -1* np.ones((8192, 4, 7, 3))
+    print(f"points_array.shape = {points_array.shape}")
+
+    for threadpool_size in [1, 4, 8, 16, 32, 64, 128, 256]:
+        pyqhull.set_threadpool_size(threadpool_size)
+
+        time_start = time.time()
+        out = pyqhull.minkowski_sum_batch(points_array)
+        print(f">>> minkowski batch of 8192 took {time.time() - time_start} sec for threadpool_size={threadpool_size}")
+
+    # points_array = np.stack([points_list] * 8, axis=0)  # shape: (n_envs, numContacts, n_fric_edge, vec_dim)
+    # for i in range(100):
+    #     points_array = np.random.rand(8192, 4, 7, 3)
+    #     print(f"points_array.shape = {points_array.shape}")
+    #     out = pyqhull.minkowski_sum_batch(points_array)
+
 
     def pad_minkowski_sum_batch(out):
         """
@@ -145,7 +168,6 @@ def test_basic_functionality():
     minkowski_test_envs = pad_minkowski_sum_batch(out)
     print(f"Padded Minkowski sum batch result shape: {minkowski_test_envs.shape}")
 
-    import pdb; pdb.set_trace()
 
 
 def benchmark_threadpool_scaling(batch_sizes, n_points, n_trials, threadpool_sizes):
