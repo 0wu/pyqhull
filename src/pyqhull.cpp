@@ -373,9 +373,25 @@ py::array_t<double> min_distance_to_hyperplanes(py::array_t<double> points, py::
 
     std::vector<std::future<void>> futures;
     for (int env = 0; env < n_envs; ++env) {
+
         futures.push_back(pool->enqueue([=]() {
             double* env_points = points_data + env * n_points * 3;
             double* env_ref_point = ref_points_data + env * 3;
+
+            // Check if data array is all zeros
+            bool all_zeros = true;
+            for (int i = 0; i < n_points * 3; ++i) {
+                if (std::abs(env_points[i]) > 1e-12) {
+                    all_zeros = false;
+                    break;
+                }
+            }
+
+            if (all_zeros) {
+                result_data[env] = 0;
+                return;
+            }
+
             std::vector<bool> mask = compute_convex_hull_mask(env_points, n_points);
             std::vector<std::vector<double>> planes = compute_hyperplanes_from_mask(env_points, n_points, mask);
             std::vector<double> ref_point_vec(env_ref_point, env_ref_point + 3);
@@ -461,7 +477,6 @@ py::array_t<double> minkowski_sum(py::array_t<double> arg) {
     // Convert input to std::vector<std::vector<std::vector<double>>>
     std::vector<std::vector<std::vector<double>>> arg_vec(numContacts,
         std::vector<std::vector<double>>(n_fric_edge, std::vector<double>(vec_dim)));
-    double* data = static_cast<double*>(buf.ptr);
     for (int c = 0; c < numContacts; ++c) {
         for (int i = 0; i < n_fric_edge; ++i) {
             for (int j = 0; j < vec_dim; ++j) {
@@ -532,10 +547,10 @@ py::list minkowski_sum_batch(py::array_t<double> batch_arg) {
     std::vector<std::future<void>> futures;
     for (int b = 0; b < n_batch; ++b) {
         futures.push_back(pool->enqueue([=, &batch_cpp_results]() {
+
             // Prepare input for C++ computation
             std::vector<std::vector<std::vector<double>>> arg_vec(numContacts,
                 std::vector<std::vector<double>>(n_fric_edge, std::vector<double>(vec_dim)));
-            double* batch_data = data + b * numContacts * n_fric_edge * vec_dim;
             for (int c = 0; c < numContacts; ++c) {
                 for (int i = 0; i < n_fric_edge; ++i) {
                     for (int j = 0; j < vec_dim; ++j) {

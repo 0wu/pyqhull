@@ -6,6 +6,27 @@ import pdb
 from scipy.spatial import ConvexHull
 from mpl_toolkits.mplot3d.art3d import Poly3DCollection
 
+def test_all_zeros():
+    ## Up to 3 zeros is fine but more than 3 is a problem.
+    cube_points = np.array([
+        [0, 0, 0],
+        [0, 0, 0],
+        [0, 0, 0],
+        [0, 0, 0]  # Adding an extra point inside the cube
+    ], dtype=np.float64)  # changed to float64
+     # Create batch
+    batch_size = 2
+    points = np.tile(cube_points[np.newaxis, :, :], (batch_size, 1, 1))
+
+    pyqhull.set_threadpool_size(16)  # Set threadpool size for parallel processing
+
+    # import pdb; pdb.set_trace()
+    mask = pyqhull.convex_hull_batch(points)
+    print(mask)
+
+    # Compute the convex hull hyperplanes
+    hyperplanes = pyqhull.convex_hull_hyperplanes_from_mask(points, mask)
+    import pdb; pdb.set_trace()
 
 def test_basic_functionality():
     # Define cube vertices
@@ -241,6 +262,7 @@ def test_parallel_scaling():
     return results
 
 if __name__ == "__main__":
+    test_all_zeros()
     test_basic_functionality()
     test_parallel_scaling()
     print("All tests passed!")
